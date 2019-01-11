@@ -1,0 +1,31 @@
+---
+
+- name: check if DB software is already installed
+  stat:
+    path: "{{ postgresql_instance_pghome_item }}"
+  with_items: "{{ postgresql_clusters }}"
+  loop_control:
+    label: "[version: {{ item.version }}, PG home directory: {{ postgresql_instance_pghome_item }}]"
+  register: postgresql_instance_pghome_stat
+  when: item.state == 'present'
+  tags:
+    - postgresql_instance_pghome_stat
+    - postgresql_instance_install_binaries
+
+#- debug: var=postgresql_instance_pghome_stat
+#  tags:
+#    - postgresql_instance_pghome_stat
+
+- name: extract PostgreSQL binaries
+  unarchive:
+    src: "{{ item.1.filename }}"
+    dest: "{{ postgresql_instance_pghome_results_item0| dirname }}"
+    remote_src: '{{ postgresql_instance_sw_remote_src }}'
+  with_nested: 
+    - "{{ postgresql_instance_pghome_stat.results }}"
+    - "{{ postgresql_instance_sw_binary_db }}"
+  loop_control:
+    label: "[instance: {{ item.0.item.name }}, source file: {{ item.1.filename }}, PG home directory: {{ postgresql_instance_pghome_results_item0 }}]"
+  when: item.0.stat is defined and not item.0.stat.exists and item.0.item.version == item.1.version and item.0.item.state == 'present'
+  tags:
+    - postgresql_instance_install_binaries

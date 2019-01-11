@@ -1,0 +1,158 @@
+---
+
+- include: directories.yml
+  tags:
+    - postgresql_instance_directories
+
+- name: create instance directories (1)
+  file:
+    dest: "{{ item.1 }}/{{ item.0.name }}"
+    state: directory
+    owner: "{{ postgresql_user }}"
+  with_nested:
+    - "{{ postgresql_clusters }}"
+    - ["{{ postgresql_binvg_mountpoint_prefix }}/diag", "{{ postgresql_binvg_mountpoint_prefix }}/dump", "{{ postgresql_datavg_mountpoint_prefix }}/archive"]
+  loop_control:
+    label: "[instance: {{ item.0.name }}, directory: {{ item.1 }}/{{ item.0.name }}]"
+  when: item.0.state == 'present'
+  tags:
+    - postgresql_instance_directories
+
+- name: create instance directories - PGDATA (2)
+  file:
+    dest: "{{ postgresql_instance_pgdata_item }}"
+    state: directory
+    owner: "{{ postgresql_user }}"
+  with_items:
+    - "{{ postgresql_clusters }}"
+  loop_control:
+    label: "[instance: {{ item.name }}, directory: {{ postgresql_instance_pgdata_item }}]"
+  when: item.state == 'present'
+  tags:
+    - postgresql_instance_directories
+
+- name: check if PostgreSQL instance is initialized
+  stat:
+    path: "{{ postgresql_instance_pgdata_item }}/PG_VERSION"
+  with_items:
+    - "{{ postgresql_clusters }}"
+  loop_control:
+    label: "[instance: {{ item.name }}, PGDATA directory: {{ postgresql_instance_pgdata_item }}]"
+  when: item.state == 'present'
+  register: postgresql_instance_pgdata_dir_version
+  tags:
+    - postgresql_instance_initialized
+
+#- debug: var=postgresql_instance_pgdata_dir_version
+#  tags:
+#    - postgresql_instance_initialized
+
+- name: check if DB software is already installed
+  stat:
+    path: "{{ postgresql_instance_pghome_item }}"
+  with_items: "{{ postgresql_clusters }}"
+  loop_control:
+    label: "[version: {{ item.version }}, PG home directory: {{ postgresql_instance_pghome_item }}]"
+  register: postgresql_instance_pghome_stat
+  when: item.state == 'present'
+  tags:
+    - postgresql_instance_pghome_stat
+    - postgresql_instance_install_binaries
+
+#- debug: var=postgresql_instance_pghome_stat
+#  tags:
+#    - postgresql_instance_pghome_stat
+
+- name: extract PostgreSQL binaries
+  unarchive:
+    src: "{{ item.1.filename }}"
+    dest: "{{ postgresql_instance_pghome_results_item0| dirname }}"
+    remote_src: '{{ postgresql_instance_sw_remote_src }}'
+  with_nested: 
+    - "{{ postgresql_instance_pghome_stat.results }}"
+    - "{{ postgresql_instance_sw_binary_db }}"
+  loop_control:
+    label: "[instance: {{ item.0.item.name }}, source file: {{ item.1.filename }}, PG home directory: {{ postgresql_instance_pghome_results_item0 }}]"
+  when: not item.0.stat.exists and item.0.item.version == item.1.version and item.0.item.state == 'present'
+  tags:
+    - postgresql_instance_install_binaries
+
+- name: check /etc/pgtab if an instance port is already in use (1)
+  shell: |
+    awk ' $1!~ /[#*]/ {print $1} ' /etc/pgtab | sed '/^$/d' | cut -d":" -f4 | grep -q '^{{ item.port }}$' ; echo $?
+  with_items: "{{ postgresql_clusters }}"
+  loop_control:
+    label: "[instance: {{ item.name }}, PG port: {{ item.port }}]"
+  register: postgresql_instance_ports_stat
+  when: item.state == 'present' and postgresql_instance_update_etc_pgtab|bool
+  tags:
+    - postgresql_instance_check_port
+
+- name: check /etc/pgtab if an instance port is already in use (2)
+  assert:
+    that:
+      - "{{ item.stdout|int }} != 0"
+    msg: "instance: {{ item.item.name }} - port: {{ item.item.port }} is already in use in /etc/pgtab"
+  with_items: "{{ postgresql_instance_ports_stat.results }}"
+  loop_control:
+    label: "[instance: {{ item.item.name }}, PG port: {{ item.item.port }}]"
+  when: postgresql_instance_update_etc_pgtab|bool
+  tags:
+    - postgresql_instance_check_port
+
+- name: update /etc/pgtab
+  lineinfile:
+    path: /etc/pgtab
+    create: yes
+    state: '{{ item.state }}' 
+    regexp: '^{{ item.name }}:.*'
+    backup: no
+    line: '{{ item.name }}:{{ postgresql_instance_pghome_item }}:{{ postgresql_instance_pgdata_item }}:{{ item.port }}:Y'
+    owner: "{{ postgresql_user }}"
+    group: "{{ postgresql_group }}"
+    mode: 0664
+  with_items: "{{ postgresql_clusters }}"
+  loop_control:
+    label: "[instance: {{ item.name }}, PG home directory: {{ postgresql_instance_pghome_item }}, PGDATA: {{ postgresql_instance_pgdata_item }}, PG port: {{ item.port }}]"
+  become: yes
+  become_user: root
+  when: postgresql_instance_update_etc_pgtab
+  tags:
+    - postgresql_instance_update_etc_pgtab
+
+#- name: Ensure PostgreSQL database is initialized.
+#  command: "{{ postgresql_bin_path }}/initdb -D {{ postgresql_data_dir }}"
+#  when: not pgdata_dir_version.stat.exists
+#  become: yes
+#  become_user: "{{ postgresql_user }}"
+#  # See: https://github.com/ansible/ansible/issues/16048#issuecomment-229012509
+#  vars:
+#    ansible_ssh_pipelining: true
+
+- name: PostgreSQL | Initialize the database | RedHat
+  command: >
+    {{ postgresql_bin_directory }}/initdb -D {{ postgresql_data_directory }}
+    --locale={{ postgresql_locale }} --encoding={{ postgresql_encoding }}
+    {% if postgresql_data_checksums and postgresql_version | version_compare('9.3', '>=') %}--data-checksums{% endif %}
+    {% if postgresql_pwfile != "" %}--pwfile={{ postgresql_pwfile }} {% endif %}
+    {% if postgresql_wal_directory != "" and postgresql_version | version_compare('10', '<') %}--xlogdir={{ postgresql_wal_directory }} {% endif %}
+    {% if postgresql_wal_directory != "" and postgresql_version | version_compare('10', '>=') %}--waldir={{ postgresql_wal_directory }} {% endif %}
+  become: yes
+  become_user: "{{ postgresql_service_user }}"
+  when: ansible_os_family == "RedHat" and
+        (postgresql_cluster_reset or
+         pgdata_dir_exist.changed or
+         not pgdata_dir_initialized.stat.exists)
+
+#  - name: create instance | create instance with 'pg_ctl init'
+#    shell: |
+#      export PGDATA={{ pgtab_pgdata }}
+#      export PGHOME={{ pgtab_pghome }}
+#      export PGPORT={{ pgtab_pgport }}
+#      $PGHOME/bin/pg_ctl init
+
+#  - name: create instance | set mode 0400 to {{ pgtab_pgdata }}/postgresql.conf
+#    file:
+#      path: "{{ pgtab_pgdata }}/postgresql.conf"
+#      mode: 0400
+

@@ -1,0 +1,79 @@
+---
+
+- name: check if PostgreSQL instance is initialized
+  stat:
+    path: "{{ postgresql_instance_pgdata_item }}/PG_VERSION"
+  with_items:
+    - "{{ postgresql_clusters }}"
+  loop_control:
+    label: "[instance: {{ item.name }}, PGDATA directory: {{ postgresql_instance_pgdata_item }}]"
+  when: item.state == 'present'
+  register: postgresql_instance_pgdata_dir_version
+  tags:
+    - postgresql_instance_initialize
+
+#- debug: var=postgresql_instance_pgdata_dir_version
+#  tags:
+#    - postgresql_instance_initialized
+
+- name: ensure PostgreSQL instance is initialized
+  shell: |
+    export PGDATA={{ postgresql_instance_pgdata_results_item }}
+    export PGHOME={{ postgresql_instance_pghome_results_item }}
+    export PGPORT={{ item.item.port }}
+    {{ postgresql_instance_pghome_results_item }}/bin/initdb -D {{ postgresql_instance_pgdata_results_item }} --lc-collate={{ item.item.lc_collate|default('en_US.UTF-8', true) }} --lc-ctype={{ item.item.lc_ctype|default('en_US.UTF-8', true) }} --encoding=={{ item.item.encoding|default('UTF-8', true) }}
+  with_items:
+    - "{{ postgresql_instance_pgdata_dir_version.results }}"
+  loop_control:
+    label: "[instance: {{ item.item.name }}, PGDATA directory: {{ postgresql_instance_pgdata_results_item }}]"
+  when: item.stat is defined and (not item.stat.exists or postgresql_instance_reset) and item.item.state == 'present'
+  tags:
+    - postgresql_instance_initialize
+
+- name: create pg_xlog/pg_wal symlink to wal filesystem
+  shell: |
+    {% if item.item.version | version_compare('10', '<') %}
+    mv {{ postgresql_instance_pgdata_results_item }}/pg_xlog/* {{ postgresql_datavg_mountpoint_prefix }}/{{ item.item.name }}/wals/
+    rm -Rf {{ postgresql_instance_pgdata_results_item }}/pg_xlog
+    cd {{ postgresql_instance_pgdata_results_item }}
+    ln -s {{ postgresql_datavg_mountpoint_prefix }}/{{ item.item.name }}/wals pg_xlog
+    {% else %}
+    mv {{ postgresql_instance_pgdata_results_item }}/pg_wal/* {{ postgresql_datavg_mountpoint_prefix }}/{{ item.item.name }}/wals/
+    rm -Rf {{ postgresql_instance_pgdata_results_item }}/pg_wal
+    cd {{ postgresql_instance_pgdata_results_item }}
+    ln -s {{ postgresql_datavg_mountpoint_prefix }}/{{ item.item.name }}/wals pg_wal
+    {% endif %}
+  with_items:
+    - "{{ postgresql_instance_pgdata_dir_version.results }}"
+  loop_control:
+    label: "[instance: {{ item.item.name }}, PGDATA directory: {{ postgresql_instance_pgdata_results_item }}, version: {{ item.item.version }}]"
+  when: postgresql_instance_create_wal_directory_symlink and item.stat is defined and (not item.stat.exists or postgresql_instance_reset) and item.item.state == 'present'
+  tags:
+    - postgresql_instance_create_wal_directory_symlink
+
+- name: create self signed certificate for ssl connections
+  shell: >
+    openssl req -new -nodes -x509 -subj "/C={{ postgresql_instance_certificate_country }}/ST={{ postgresql_instance_certificate_state }}/L={{ postgresql_instance_certificate_locality }}/O={{ postgresql_instance_certificate_organization }}/OU={{ postgresql_instance_certificate_organizational_unit }}/CN={{ ansible_fqdn }}" -days 3650 -keyout {{ postgresql_instance_pgdata_results_item }}/server.key -out {{ postgresql_instance_pgdata_results_item }}/server.crt -extensions v3_ca
+  args:
+    creates: "{{ postgresql_instance_pgdata_results_item }}/server.crt"
+  with_items:
+    - "{{ postgresql_instance_pgdata_dir_version.results }}"
+  loop_control:
+    label: "[instance: {{ item.item.name }}, PGDATA directory: {{ postgresql_instance_pgdata_results_item }}]"
+  when: postgresql_instance_create_self_signed_certificate and item.stat is defined and (not item.stat.exists or postgresql_instance_reset) and item.item.state == 'present'
+  tags:
+    - postgresql_instance_create_self_signed_certificate
+
+- name: set proper cert files permissions
+  file:
+    path: "{{ postgresql_instance_pgdata_results_item0 }}/{{ item.1.cert_file }}"
+    mode: "{{ item.1.mode }}"
+  with_nested:
+    - "{{ postgresql_instance_pgdata_dir_version.results }}"
+    - [ { cert_file: 'server.crt', mode: '0644' }, { cert_file: 'server.key', mode: '0600' } ]
+  loop_control:
+    label: "[instance: {{ item.0.item.name }}, cert file: {{ postgresql_instance_pgdata_results_item0 }}/{{ item.1.cert_file }}]"
+  when: postgresql_instance_create_self_signed_certificate and item.0.stat is defined and (not item.0.stat.exists or postgresql_instance_reset) and item.0.item.state == 'present'
+  tags:
+    - postgresql_instance_create_self_signed_certificate
+

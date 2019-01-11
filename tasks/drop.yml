@@ -1,0 +1,67 @@
+---
+
+- name: stop PostgreSQL instance
+  shell: |
+    export PGDATA={{ postgresql_instance_pgdata_item }}
+    export PGHOME={{ postgresql_instance_pghome_item }}
+    export PGPORT={{ item.port }}
+    {{ postgresql_instance_pghome_item }}/bin/pg_ctl -D {{ postgresql_instance_pgdata_item }} stop
+    echo 0
+  with_items:
+    - "{{ postgresql_clusters }}"
+  loop_control:
+    label: "[instance: {{ item.name }}, PGDATA directory: {{ postgresql_instance_pgdata_item }}]"
+  when: item.state == 'absent'
+  tags:
+    - postgresql_instance_stop
+
+- name: remove instance directories
+  file:
+    dest: "{{ item.1 }}/{{ item.0.name }}"
+    state: absent
+  with_nested:
+    - "{{ postgresql_clusters }}"
+    - ["{{ postgresql_binvg_mountpoint_prefix }}/diag", "{{ postgresql_binvg_mountpoint_prefix }}/dump", "{{ postgresql_datavg_mountpoint_prefix }}/archive"]
+  loop_control:
+    label: "[instance: {{ item.0.name }}, directory: {{ item.1 }}/{{ item.0.name }}]"
+  when: item.0.state == 'absent'
+  tags:
+    - postgresql_instance_remove_directories
+
+- name: remove instance directories - PGDATA
+  file:
+    dest: "{{ postgresql_instance_pgdata_item }}"
+    state: absent
+  with_items:
+    - "{{ postgresql_clusters }}"
+  loop_control:
+    label: "[instance: {{ item.name }}, directory: {{ postgresql_instance_pgdata_item }}]"
+  when: item.state == 'absent'
+  tags:
+    - postgresql_instance_remove_directories
+
+- name: remove instance directories - wals directory contents
+  shell: |
+    echo
+    rm -Rf {{ postgresql_datavg_mountpoint_prefix }}/{{ item.name }}/wals/*
+    echo
+  with_items:
+    - "{{ postgresql_clusters }}"
+  loop_control:
+    label: "[instance: {{ item.name }}, directory: {{ postgresql_datavg_mountpoint_prefix }}/{{ item.name }}/wals]"
+  when: item.state == 'absent'
+  tags:
+    - postgresql_instance_remove_directories
+
+- name: remove instance directories - database directories
+  include: remove_database_directories.yml pg_instance={{ outer_item }}
+  with_items:
+    - "{{ postgresql_clusters }}"
+  loop_control:
+    label: "[instnace: {{ outer_item.name }}]"
+    loop_var: outer_item
+  when: outer_item.state == 'absent'
+  tags:
+    - postgresql_instance_remove_directories
+
+

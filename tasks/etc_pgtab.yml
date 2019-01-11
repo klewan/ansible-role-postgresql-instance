@@ -1,0 +1,44 @@
+---
+
+- name: check /etc/pgtab if an instance port is already in use (1)
+  shell: |
+    awk ' $1!~ /[#*]/ {print $1} ' /etc/pgtab | sed '/^$/d' | cut -d":" -f4 | grep -q '^{{ item.port }}$' ; echo $?
+  with_items: "{{ postgresql_clusters }}"
+  loop_control:
+    label: "[instance: {{ item.name }}, PG port: {{ item.port }}]"
+  register: postgresql_instance_ports_stat
+  when: item.state == 'present' and postgresql_instance_update_etc_pgtab|bool
+  tags:
+    - postgresql_instance_check_port
+
+- name: check /etc/pgtab if an instance port is already in use (2)
+  assert:
+    that:
+      - "{{ item.stdout|int }} != 0"
+    msg: "instance: {{ item.item.name }} - port: {{ item.item.port }} is already in use in /etc/pgtab"
+  with_items: "{{ postgresql_instance_ports_stat.results }}"
+  loop_control:
+    label: "[instance: {{ item.item.name }}, PG port: {{ item.item.port }}]"
+  when: postgresql_instance_update_etc_pgtab|bool
+  tags:
+    - postgresql_instance_check_port
+
+- name: update /etc/pgtab
+  lineinfile:
+    path: /etc/pgtab
+    create: yes
+    state: '{{ item.state }}' 
+    regexp: '^{{ item.name }}:.*'
+    backup: no
+    line: '{{ item.name }}:{{ postgresql_instance_pghome_item }}:{{ postgresql_instance_pgdata_item }}:{{ item.port }}:Y'
+    owner: "{{ postgresql_user }}"
+    group: "{{ postgresql_group }}"
+    mode: 0664
+  with_items: "{{ postgresql_clusters }}"
+  loop_control:
+    label: "[instance: {{ item.name }}, PG home directory: {{ postgresql_instance_pghome_item }}, PGDATA: {{ postgresql_instance_pgdata_item }}, PG port: {{ item.port }}]"
+  become: yes
+  become_user: root
+  when: postgresql_instance_update_etc_pgtab
+  tags:
+    - postgresql_instance_update_etc_pgtab

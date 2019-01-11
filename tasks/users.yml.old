@@ -1,0 +1,37 @@
+---
+
+- name: create users
+  shell: |
+    export PGDATA={{ postgresql_instance_pgdata_item0 }}
+    export PGHOME={{ postgresql_instance_pghome_item0 }}
+    export PGPORT={{ item.0.port }}
+    {{ postgresql_env_pgoptions }} {{ postgresql_instance_pghome_item0 }}/bin/psql -v ON_ERROR_STOP=0 -X -q -d postgres -c "CREATE ROLE {{ item.1.name }}"
+    {{ postgresql_env_pgoptions }} {{ postgresql_instance_pghome_item0 }}/bin/psql -v ON_ERROR_STOP=0 -X -q -d postgres -c "ALTER ROLE {{ item.1.name }} WITH {{ item.1.role_attr_flags }}"
+    {{ postgresql_env_pgoptions }} {{ postgresql_instance_pghome_item0 }}/bin/psql -v ON_ERROR_STOP=0 -X -q -d postgres -c "ALTER ROLE {{ item.1.name }} PASSWORD '{{ item.1.password|default(omit) }}'"
+  with_subelements:
+    - "{{ postgresql_clusters }}"
+    - users
+  loop_control:
+    label: "[instance: {{ item.0.name }}, user: {{ item.1.name }}]"
+  when: item.0.state == 'present' and item.1.state == 'present'
+  tags:
+    - postgresql_instance_users
+    - postgresql_instance_users_create
+
+- name: drop users
+  shell: |
+    export PGDATA={{ postgresql_instance_pgdata_item0 }}
+    export PGHOME={{ postgresql_instance_pghome_item0 }}
+    export PGPORT={{ item.0.port }}
+    {{ postgresql_env_pgoptions }} {{ postgresql_instance_pghome_item0 }}/bin/psql -v ON_ERROR_STOP=0 -X -q -d postgres -c "DROP ROLE {{ item.1.name }}"
+  with_subelements:
+    - "{{ postgresql_clusters }}"
+    - users
+  loop_control:
+    label: "[instance: {{ item.0.name }}, user: {{ item.1.name }}]"
+  when: item.0.state == 'present' and item.1.state == 'absent'
+  tags:
+    - postgresql_instance_users
+    - postgresql_instance_users_drop
+
+

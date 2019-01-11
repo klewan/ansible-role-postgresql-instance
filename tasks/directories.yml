@@ -1,0 +1,29 @@
+---
+
+- name: create instance directories (1)
+  file:
+    dest: "{{ item.1 }}/{{ item.0.name }}"
+    state: directory
+    owner: "{{ postgresql_user }}"
+  with_nested:
+    - "{{ postgresql_clusters }}"
+    - ["{{ postgresql_binvg_mountpoint_prefix }}/diag", "{{ postgresql_binvg_mountpoint_prefix }}/dump", "{{ postgresql_datavg_mountpoint_prefix }}/archive"]
+  loop_control:
+    label: "[instance: {{ item.0.name }}, directory: {{ item.1 }}/{{ item.0.name }}]"
+  when: item.0.state == 'present'
+  tags:
+    - postgresql_instance_directories
+
+- name: create instance directories - PGDATA (2)
+  file:
+    dest: "{{ postgresql_instance_pgdata_item }}"
+    state: directory
+    owner: "{{ postgresql_user }}"
+  with_items:
+    - "{{ postgresql_clusters }}"
+  loop_control:
+    label: "[instance: {{ item.name }}, directory: {{ postgresql_instance_pgdata_item }}]"
+  when: item.state == 'present'
+  tags:
+    - postgresql_instance_directories
+

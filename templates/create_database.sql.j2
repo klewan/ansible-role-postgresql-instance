@@ -1,0 +1,30 @@
+
+{% for database in item.item.databases %}
+{%   if database.state == 'present' %}
+
+create role "{{ database.owner }}" NOLOGIN;
+
+create database "{{ database.name }}" owner "{{ database.owner }}";
+
+\c "{{ database.name }}";
+
+{%     for tablespace in database.tablespaces %}
+
+create tablespace "{{ database.name }}_{{ tablespace.name_suffix }}" owner "{{ database.owner }}" location '{{ postgresql_datavg_mountpoint_prefix }}/{{ item.item.name }}/{{ database.name }}_{{ tablespace.name_suffix }}';
+
+{%       if tablespace.default_tablespace is defined %}
+{%         if tablespace.default_tablespace %}
+ALTER DATABASE "{{ database.name }}" SET default_tablespace TO "{{ database.name }}_{{ tablespace.name_suffix }}";
+{%         endif %}
+{%       endif %}
+
+{%       if tablespace.temp_tablespaces is defined %}
+{%         if tablespace.temp_tablespaces %}
+ALTER DATABASE "{{ database.name }}" SET temp_tablespaces TO "{{ database.name }}_{{ tablespace.name_suffix }}";
+{%         endif %}
+{%       endif %}
+
+{%     endfor %}
+{%  endif %}
+{% endfor %}
+

@@ -1,0 +1,34 @@
+---
+
+- include: drop.yml
+  tags:
+    - postgresql_instance_drop
+
+- include: directories.yml
+  tags:
+    - postgresql_instance_directories
+
+- include: binaries.yml
+  tags:
+    - postgresql_instance_install_binaries
+
+- include: etc_pgtab.yml
+  tags:
+    - postgresql_instance_etc_pgtab
+
+- include: initialize.yml
+  tags:
+    - postgresql_instance_initialize
+
+- include: config_files.yml
+  tags:
+    - postgresql_instance_config_files
+
+- include: users.yml
+  tags:
+    - postgresql_instance_users
+
+- include: databases.yml
+  tags:
+    - postgresql_instance_databases
+

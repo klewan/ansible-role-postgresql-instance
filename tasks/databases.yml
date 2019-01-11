@@ -1,0 +1,60 @@
+---
+
+- name: databases | ensure sql script directory exists
+  file:
+    dest: "~/sql/log"
+    state: directory
+    owner: "{{ postgresql_user }}"
+  with_items:
+    - "{{ postgresql_scripts_sql_directory }}"
+    - "{{ postgresql_scripts_sql_log_directory }}"
+  loop_control:
+    label: "[directory: {{ item }}]"
+  tags:
+    - postgresql_instance_databases
+    - postgresql_instance_sql_directory
+
+- name: databases | check if PostgreSQL instance is up and running
+  stat:
+    path: "{{ postgresql_instance_pgdata_item }}/postmaster.pid"
+  with_items:
+    - "{{ postgresql_clusters }}"
+  loop_control:
+    label: "[instance: {{ item.name }}, postmaster.pid file: {{ postgresql_instance_pgdata_item }}/postmaster.pid]"
+  when: item.state == 'present'
+  register: postgresql_instance_check_status
+  tags:
+    - postgresql_instance_check_status
+    - postgresql_instance_databases
+
+- name: databases | prepare create_databases.sql script
+  template:
+    src: create_database.sql.j2
+    dest: "{{ postgresql_scripts_sql_directory }}/create_database.{{ item.item.name }}.sql"
+    owner: "{{ postgresql_user }}"
+    group: "{{ postgresql_group }}"
+    mode: 0440
+  with_items:
+    - "{{ postgresql_instance_check_status.results }}"
+  loop_control:
+    label: "[instance: {{ item.item.name }}, sql script: {{ postgresql_scripts_sql_directory }}/create_database.{{ item.item.name }}.sql]"
+  when: item.stat is defined and item.stat.exists and item.item.state == 'present' and (item.item.ha_config is not defined or (item.item.ha_config is defined and item.item.ha_config.role|default('primary',true) == 'primary'))
+  tags:
+    - postgresql_instance_databases
+    - postgresql_instance_databases_sql_script
+
+- name: databases | execute create_databases.sql script
+  shell: |
+    export PGDATA={{ postgresql_instance_pgdata_results_item }}
+    export PGHOME={{ postgresql_instance_pghome_results_item }}
+    export PGPORT={{ item.item.port }}
+    {{ postgresql_env_pgoptions }} {{ postgresql_instance_pghome_results_item }}/bin/psql -v ON_ERROR_STOP=0 -X -q -d postgres -f {{ postgresql_scripts_sql_directory }}/create_database.{{ item.item.name }}.sql -L {{ postgresql_scripts_sql_log_directory }}/create_database.{{ item.item.name }}.log
+  with_items:
+    - "{{ postgresql_instance_check_status.results }}"
+  loop_control:
+    label: "[instance: {{ item.item.name }}, sql script: /tmp/create_database.{{ item.item.name }}.sql]"
+  when: item.stat is defined and item.stat.exists and item.item.state == 'present' and (item.item.ha_config is not defined or (item.item.ha_config is defined and item.item.ha_config.role|default('primary',true) == 'primary'))
+  tags:
+    - postgresql_instance_databases
+    - postgresql_instance_databases_create
+

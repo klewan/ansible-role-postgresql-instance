@@ -1,0 +1,49 @@
+---
+
+- name: check if PostgreSQL instance is up and running
+  stat:
+    path: "{{ postgresql_instance_pgdata_item }}/postmaster.pid"
+  with_items:
+    - "{{ postgresql_clusters }}"
+  loop_control:
+    label: "[instance: {{ item.name }}, postmaster.pid file: {{ postgresql_instance_pgdata_item }}/postmaster.pid]"
+  when: item.state == 'present'
+  register: postgresql_instance_check_status
+  tags:
+    - postgresql_instance_check_status
+    - postgresql_instance_users
+
+- name: create users
+  shell: |
+    export PGDATA={{ postgresql_instance_pgdata_results_item0 }}
+    export PGHOME={{ postgresql_instance_pghome_results_item0 }}
+    export PGPORT={{ item.0.item.port }}
+    {{ postgresql_env_pgoptions }} {{ postgresql_instance_pghome_results_item0 }}/bin/psql -v ON_ERROR_STOP=0 -X -q -d postgres -c "CREATE ROLE {{ item.1.name }}"
+    {{ postgresql_env_pgoptions }} {{ postgresql_instance_pghome_results_item0 }}/bin/psql -v ON_ERROR_STOP=0 -X -q -d postgres -c "ALTER ROLE {{ item.1.name }} WITH {{ item.1.role_attr_flags }}"
+    {{ postgresql_env_pgoptions }} {{ postgresql_instance_pghome_results_item0 }}/bin/psql -v ON_ERROR_STOP=0 -X -q -d postgres -c "ALTER ROLE {{ item.1.name }} PASSWORD '{{ item.1.password|default(omit) }}'"
+  with_subelements:
+    - "{{ postgresql_instance_check_status.results }}"
+    - item.users
+  loop_control:
+    label: "[instance: {{ item.0.item.name }}, user: {{ item.1.name }}]"
+  when: item.0.stat is defined and item.0.stat.exists and item.0.item.state == 'present' and item.1.state == 'present' and (item.0.item.ha_config is not defined or (item.0.item.ha_config is defined and item.0.item.ha_config.role|default('primary',true) == 'primary'))
+  tags:
+    - postgresql_instance_users
+    - postgresql_instance_users_create
+
+- name: drop users
+  shell: |
+    export PGDATA={{ postgresql_instance_pgdata_results_item0 }}
+    export PGHOME={{ postgresql_instance_pghome_results_item0 }}
+    export PGPORT={{ item.0.item.port }}
+    {{ postgresql_env_pgoptions }} {{ postgresql_instance_pghome_results_item0 }}/bin/psql -v ON_ERROR_STOP=0 -X -q -d postgres -c "DROP ROLE {{ item.1.name }}"
+  with_subelements:
+    - "{{ postgresql_instance_check_status.results }}"
+    - item.users
+  loop_control:
+    label: "[instance: {{ item.0.item.name }}, user: {{ item.1.name }}]"
+  when: item.0.stat is defined and item.0.stat.exists and item.0.item.state == 'present' and item.1.state == 'absent' and (item.0.item.ha_config is not defined or (item.0.item.ha_config is defined and item.0.item.ha_config.role|default('primary',true) == 'primary'))
+  tags:
+    - postgresql_instance_users
+    - postgresql_instance_users_drop
+

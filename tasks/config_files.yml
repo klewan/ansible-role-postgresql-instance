@@ -1,0 +1,112 @@
+---
+
+- name: mark PGDATA/postgresql.conf as read-only file (set 0400 mode)
+  file:
+    path: "{{ postgresql_instance_pgdata_item }}/postgresql.conf"
+    mode: 0400
+  with_items: "{{ postgresql_clusters }}"
+  loop_control:
+    label: "[instance: {{ item.name }}, config file: {{ postgresql_instance_pgdata_item }}/postgresql.conf]"
+  when: item.state == 'present' and postgresql_instance_set_postgresql_conf_read_only|bool
+  tags:
+    - postgresql_instance_postgresql_conf
+
+- name: configure postgresql.auto.conf config
+  template:
+    src: postgresql.auto.conf.j2
+    dest: "{{ postgresql_instance_pgdata_item }}/postgresql.auto.conf"
+    owner: "{{ postgresql_user }}"
+    group: "{{ postgresql_group }}"
+    mode: 0640
+    backup: yes
+  with_items: "{{ postgresql_clusters }}"
+  loop_control:
+    label: "[instance: {{ item.name }}, config file: {{ postgresql_instance_pgdata_item }}/postgresql.auto.conf]"
+  when: item.state == 'present' and postgresql_instance_configure_postgresql_auto_conf|bool
+  tags:
+    - postgresql_instance_postgresql_auto_conf
+
+- name: configure host based authentication (if entries are configured)
+  template:
+    src: pg_hba.conf.j2
+    dest: "{{ postgresql_instance_pgdata_item }}/pg_hba.conf"
+    owner: "{{ postgresql_user }}"
+    group: "{{ postgresql_group }}"
+    mode: 0640
+    backup: yes
+  with_items: "{{ postgresql_clusters }}"
+  loop_control:
+    label: "[instance: {{ item.name }}, config file: {{ postgresql_instance_pgdata_item }}/pg_hba.conf]"
+  when: item.state == 'present' and postgresql_instance_configure_hba_entries|bool
+  tags:
+    - postgresql_instance_hba_conf
+
+- name: configure recovery.conf config
+  template:
+    src: recovery.conf.j2
+    dest: "{{ postgresql_instance_pgdata_item }}/recovery.conf"
+    owner: "{{ postgresql_user }}"
+    group: "{{ postgresql_group }}"
+    mode: 0640
+    backup: yes
+  with_items: "{{ postgresql_clusters }}"
+  loop_control:
+    label: "[instance: {{ item.name }}, config file: {{ postgresql_instance_pgdata_item }}/recovery.conf]"
+  when: item.state == 'present' and postgresql_instance_configure_recovery_conf|bool and item.ha_config is defined and item.ha_config.role|default('primary',true) == 'standby' and item.ha_config.standby_config is defined
+  tags:
+    - postgresql_instance_recovery_conf
+
+- name: check if PostgreSQL instance is up and running
+  stat:
+    path: "{{ postgresql_instance_pgdata_item }}/postmaster.pid"
+  with_items:
+    - "{{ postgresql_clusters }}"
+  loop_control:
+    label: "[instance: {{ item.name }}, postmaster.pid file: {{ postgresql_instance_pgdata_item }}/postmaster.pid]"
+  when: item.state == 'present'
+  register: postgresql_instance_check_status
+  tags:
+    - postgresql_instance_check_status
+    - postgresql_instance_reload_config
+    - postgresql_instance_start
+    - postgresql_instance_postgresql_auto_conf
+    - postgresql_instance_hba_conf
+    - postgresql_instance_recovery_conf
+
+#- debug: var=postgresql_instance_check_status
+#  tags:
+#    - postgresql_instance_check_status
+
+- name: reload PostgreSQL instance configuration
+  shell: |
+    export PGDATA={{ postgresql_instance_pgdata_results_item }}
+    export PGHOME={{ postgresql_instance_pghome_results_item }}
+    export PGPORT={{ item.item.port }}
+    {{ postgresql_instance_pghome_results_item }}/bin/pg_ctl -D {{ postgresql_instance_pgdata_results_item }} reload
+  with_items:
+    - "{{ postgresql_instance_check_status.results }}"
+  loop_control:
+    label: "[instance: {{ item.item.name }}, PGDATA directory: {{ postgresql_instance_pgdata_results_item }}]"
+  when: item.stat is defined and item.stat.exists and item.item.state == 'present'
+  tags:
+    - postgresql_instance_reload_config
+    - postgresql_instance_postgresql_auto_conf
+    - postgresql_instance_hba_conf
+    - postgresql_instance_recovery_conf
+
+- name: start PostgreSQL instance
+  shell: |
+    export PGDATA={{ postgresql_instance_pgdata_results_item }}
+    export PGHOME={{ postgresql_instance_pghome_results_item }}
+    export PGPORT={{ item.item.port }}
+    {{ postgresql_instance_pghome_results_item }}/bin/pg_ctl -D {{ postgresql_instance_pgdata_results_item }} start 
+  with_items:
+    - "{{ postgresql_instance_check_status.results }}"
+  loop_control:
+    label: "[instance: {{ item.item.name }}, PGDATA directory: {{ postgresql_instance_pgdata_results_item }}]"
+  when: item.stat is defined and not item.stat.exists and item.item.state == 'present'
+  tags:
+    - postgresql_instance_start
+    - postgresql_instance_postgresql_auto_conf
+    - postgresql_instance_hba_conf
+

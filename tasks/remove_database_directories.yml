@@ -1,0 +1,17 @@
+---
+
+- name: remove instance directories - database directory contents
+  shell: |
+    echo
+    rm -Rf {{ postgresql_datavg_mountpoint_prefix }}/{{ pg_instance.name }}/{{ item.0.name }}_{{ item.1.name_suffix }}/*
+    echo
+  with_subelements:
+    - "{{ pg_instance.databases }}"
+    - tablespaces
+  loop_control:
+    label: "[instance: {{ pg_instance.name }}, directory: {{ postgresql_datavg_mountpoint_prefix }}/{{ pg_instance.name }}/{{ item.0.name }}_{{ item.1.name_suffix }}]"
+  tags:
+    - postgresql_instance_remove_directories
+    - postgresql_instance_remove_database_directories
+
+
